@@ -1,0 +1,276 @@
+# Midday Database Package - Cloudflare D1
+
+> AI-readable documentation for the @midday/db package
+
+## Overview
+
+Database layer for Midday application, migrated from PostgreSQL to Cloudflare D1 (SQLite-based). Built with Drizzle ORM.
+
+## What This Is
+
+- **Database Package**: Centralized database schema, queries, and utilities
+- **Technology**: Cloudflare D1 (SQLite), Drizzle ORM
+- **Tables**: 43 fully migrated tables with 22 relations
+- **Architecture**: Dependency injection pattern for runtime bindings
+
+## Quick Start
+
+### Installation
+
+```typescript
+import { db } from "@midday/db/client";
+import { users, teams } from "@midday/db/schema";
+```
+
+### Usage in Cloudflare Workers
+
+```typescript
+export default {
+  async fetch(request: Request, env: Env) {
+    // Initialize once per request
+    const database = db(env.DB);
+    
+    // Execute queries
+    const user = await database.select().from(users).where(eq(users.id, userId));
+    const allTeams = await database.select().from(teams);
+    
+    return Response.json({ user, teams: allTeams });
+  }
+}
+```
+
+### Configuration (wrangler.toml)
+
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "midday-db"
+database_id = "your-database-id"
+```
+
+## Key Concepts
+
+### 1. Dependency Injection Pattern
+
+The database package accepts a D1 binding as a parameter:
+
+```typescript
+const database = db(env.DB);  // Pass binding at runtime
+```
+
+**Why:** Keeps package infrastructure-agnostic, testable, and reusable.
+
+### 2. Usage Pattern
+
+- **Initialize once** per request/execution context
+- **Reuse** the database instance for multiple queries
+- **No cleanup** needed - D1 handles lifecycle
+
+### 3. Type Safety
+
+```typescript
+interface Env {
+  DB: D1Database;  // TypeScript type for D1 binding
+}
+```
+
+## Available Exports
+
+### Client (`@midday/db/client`)
+
+- `db(d1Binding)` - Create database instance
+- `connectDb(d1Binding)` - Async wrapper for db()
+- `getConnectionPoolStats()` - Returns D1 status info
+
+### Schema (`@midday/db/schema`)
+
+All 43 tables and relations:
+- `users`, `teams`, `usersOnTeam`
+- `bankAccounts`, `bankConnections`
+- `transactions`, `transactionCategories`
+- `invoices`, `customers`, `documents`
+- And 33 more tables...
+
+### Queries (`@midday/db/queries`)
+
+Pre-built query functions organized by entity.
+
+### Utilities
+
+- `@midday/db/utils/health` - Database health checks
+- `@midday/db/utils/api-keys` - API key utilities
+- `@midday/db/utils/currency` - Currency helpers
+- `@midday/db/utils/tax` - Tax calculation utilities
+
+## Migration from PostgreSQL
+
+### Key Differences
+
+| Feature | PostgreSQL | D1/SQLite |
+|---------|-----------|-----------|
+| UUID | `uuid()` | `text()` with app-level generation |
+| Enums | `pgEnum()` | `text()` with TypeScript types |
+| Timestamps | `timestamp()` | `integer({ mode: "timestamp" })` |
+| Booleans | `boolean()` | `integer({ mode: "boolean" })` |
+| JSON | `jsonb()` | `text({ mode: "json" })` |
+| Decimals | `numeric()` | `real()` |
+
+### Breaking Changes
+
+**Before (PostgreSQL):**
+```typescript
+import { db } from "@midday/db/client";
+await db.select().from(users);
+```
+
+**After (D1):**
+```typescript
+import { db } from "@midday/db/client";
+const database = db(env.DB);  // Requires D1 binding
+await database.select().from(users);
+```
+
+### Removed Features
+
+- **Vector embeddings** - Use Cloudflare Vectorize or external vector DB
+- **Full-text search** - Use SQLite FTS5 or Typesense
+- **Row-level security** - Implement in application layer
+- **Read replicas** - D1 handles replication automatically
+
+## Common Patterns
+
+### Single Query
+
+```typescript
+const database = db(env.DB);
+const user = await database
+  .select()
+  .from(users)
+  .where(eq(users.email, email))
+  .limit(1);
+```
+
+### Multiple Queries
+
+```typescript
+const database = db(env.DB);
+
+const [user, teams, transactions] = await Promise.all([
+  database.select().from(users).where(eq(users.id, userId)),
+  database.select().from(teams),
+  database.select().from(transactions).limit(10)
+]);
+```
+
+### With Joins
+
+```typescript
+const database = db(env.DB);
+const result = await database
+  .select()
+  .from(users)
+  .leftJoin(teams, eq(users.teamId, teams.id))
+  .where(eq(users.id, userId));
+```
+
+### Transactions
+
+```typescript
+const database = db(env.DB);
+await database.transaction(async (tx) => {
+  await tx.insert(users).values(newUser);
+  await tx.insert(teams).values(newTeam);
+});
+```
+
+## Testing
+
+### Mock D1 Database
+
+```typescript
+import { db } from "@midday/db/client";
+
+const mockD1 = {
+  prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) })
+};
+
+const database = db(mockD1 as any);
+```
+
+## Performance Tips
+
+1. **Initialize once per request** - Avoids object creation overhead
+2. **Use Promise.all** for parallel queries
+3. **Add indexes** for frequently queried columns
+4. **Batch operations** when possible
+5. **Use prepared statements** through Drizzle
+
+## Deployment
+
+### Generate Migrations
+
+```bash
+cd packages/db
+npx drizzle-kit generate:sqlite
+```
+
+### Create D1 Database
+
+```bash
+npx wrangler d1 create midday-db
+```
+
+### Apply Migrations
+
+```bash
+npx wrangler d1 migrations apply midday-db --local  # Local testing
+npx wrangler d1 migrations apply midday-db          # Production
+```
+
+## Troubleshooting
+
+### "env.DB is undefined"
+
+- Ensure `wrangler.toml` has D1 binding configured
+- Check binding name matches (default: "DB")
+- Run `wrangler dev` for local development
+
+### Type Errors
+
+- Install `@cloudflare/workers-types`
+- Define `Env` interface with `DB: D1Database`
+
+### Query Errors
+
+- D1 uses SQLite syntax, not PostgreSQL
+- Check Drizzle SQLite documentation for syntax
+- Test queries locally with `wrangler dev`
+
+## References
+
+- [Cloudflare D1 Docs](https://developers.cloudflare.com/d1/)
+- [Drizzle ORM SQLite](https://orm.drizzle.team/docs/get-started-sqlite)
+- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started-sqlite#cloudflare-d1)
+
+## Package Structure
+
+```
+packages/db/
+├── drizzle.config.ts    # Drizzle configuration
+├── package.json         # Dependencies
+├── src/
+│   ├── client.ts        # Database client
+│   ├── schema.ts        # All 43 tables
+│   ├── sql.ts           # SQL utilities
+│   ├── queries/         # Pre-built queries
+│   └── utils/           # Helper functions
+└── migrations/          # Database migrations
+```
+
+## Support
+
+For issues or questions about this package:
+1. Check this documentation
+2. Review Drizzle ORM docs
+3. Consult Cloudflare D1 documentation
+4. Check migration notes in commit history
