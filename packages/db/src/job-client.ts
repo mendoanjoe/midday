@@ -1,35 +1,25 @@
-import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import { drizzle } from "drizzle-orm/d1";
 import type { Database } from "./client";
 import * as schema from "./schema";
 
 /**
- * Creates a new job-optimized database instance with its own connection pool.
+ * Creates a new job-optimized database instance for D1.
  *
- * Each instance is designed for job workflows with:
- * - Single connection per job (max: 1) to avoid flooding Supabase pooler
- * - Quick idle timeout (10s) for efficient connection management
- * - Separate disconnect function for lifecycle management
+ * Note: D1 connection management is handled by Cloudflare Workers runtime.
+ * This function creates a drizzle instance with the provided D1 binding.
  */
-export const createJobDb = () => {
-  const isDevelopment = process.env.NODE_ENV === "development";
-
-  const jobPool = new Pool({
-    connectionString: process.env.DATABASE_PRIMARY_POOLER_URL!,
-    max: 1, // Critical: only 1 connection per job to avoid flooding Supabase pooler
-    idleTimeoutMillis: isDevelopment ? 5000 : 60000, // Match main client config
-    connectionTimeoutMillis: 15000, // Match main client config
-    maxUses: 0, // No limit on connection reuse for jobs
-    allowExitOnIdle: true,
-  });
-
-  const db = drizzle(jobPool, {
+export const createJobDb = (d1Binding: D1Database) => {
+  const db = drizzle(d1Binding, {
     schema,
     casing: "snake_case",
   });
 
   return {
     db: db as Database,
-    disconnect: () => jobPool.end(),
+    disconnect: () => {
+      // D1 connections are managed by Cloudflare Workers runtime
+      // No manual cleanup needed
+      return Promise.resolve();
+    },
   };
 };
